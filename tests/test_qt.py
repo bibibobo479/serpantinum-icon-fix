@@ -40,5 +40,30 @@ print('Qt loaded the real icon through the generated user index')
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
 
+@unittest.skipUnless(__import__('shutil').which('quickshell'), 'optional Quickshell is not installed')
+class PrivateModuleTests(unittest.TestCase):
+    def test_private_component_loads_without_upstream_qmldir(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            module = root / 'private-icons'
+            module.mkdir()
+            assets = Path(__file__).resolve().parents[1] / 'serpantinum_icon_fix'
+            for name in ('ResolvedAppIcon.qml', 'IconResolver.qml'):
+                content = (assets / name).read_text().replace('__THEME__', 'hicolor').replace('__PACKAGE__', str(assets.parent))
+                (module / name).write_text(content)
+            (module / 'qmldir').write_text('singleton IconResolver 1.0 IconResolver.qml\nResolvedAppIcon 1.0 ResolvedAppIcon.qml\n')
+            qml = root / 'Shell.qml'
+            qml.write_text('import QtQuick\nimport Quickshell\nimport "' + module.as_uri() + '" as IconFix\n'
+                           'ShellRoot { IconFix.ResolvedAppIcon { iconName: "folder" } '
+                           'Timer { interval: 1500; running: true; onTriggered: Qt.quit() } }\n')
+            result = subprocess.run(['quickshell', '-p', str(qml)],
+                                    env=dict(os.environ, QT_QPA_PLATFORM='offscreen'),
+                                    capture_output=True, text=True, timeout=15)
+            output = result.stdout + result.stderr
+            self.assertEqual(result.returncode, 0, output)
+            self.assertIn('Configuration Loaded', output)
+            self.assertNotIn('ERROR', output)
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 import shutil
 import sys
+import subprocess
 
 if os.geteuid() == 0:
     sys.exit("Run without sudo.")
@@ -34,3 +35,34 @@ desktop.write_text('[Desktop Entry]\nType=Application\nName=Serpantinum Icon Fix
                    f'Exec={quoted} --gui\nIcon=preferences-desktop-theme\nTerminal=false\n'
                    'Categories=Settings;\nStartupNotify=false\n')
 print(f"Installed: {launcher}\nApplication menu: Serpantinum Icon Fix\nRun it without sudo.")
+
+# A user timer survives replacement of the Serpantinum installation itself.
+config = Path(os.environ.get("XDG_CONFIG_HOME", str(home / ".config")))
+if not config.is_absolute():
+    config = home / ".config"
+units = config / "systemd/user"
+units.mkdir(parents=True, exist_ok=True)
+# systemd expands percent specifiers, including inside quoted arguments.
+def unit_arg(value):
+    return '"' + str(value).replace('\\', '\\\\').replace('"', '\\"').replace('%', '%%') + '"'
+(units / "serpantinum-icon-fix.service").write_text(
+    '[Unit]\nDescription=Restore Serpantinum icons after updates\n'
+    '[Service]\nType=oneshot\n'
+    f'ExecStart={unit_arg(launcher)} --maintain\n')
+(units / "serpantinum-icon-fix.timer").write_text(
+    '[Unit]\nDescription=Check Serpantinum icon compatibility after updates\n'
+    '[Timer]\nOnStartupSec=30\nOnUnitInactiveSec=15\nAccuracySec=5\n'
+    '[Install]\nWantedBy=timers.target\n')
+if shutil.which("systemctl"):
+    reload = subprocess.run(["systemctl", "--user", "daemon-reload"], capture_output=True)
+    if reload.returncode == 0:
+        enabled = subprocess.run(["systemctl", "--user", "enable", "--now", "serpantinum-icon-fix.timer"],
+                                 capture_output=True)
+        if enabled.returncode == 0:
+            print("Automatic update repair enabled (no shell restarts).")
+        else:
+            print("Timer activation failed: " + enabled.stderr.decode(errors="replace"))
+    else:
+        print("No user systemd session. Enable serpantinum-icon-fix.timer later, or run --apply after updates.")
+else:
+    print("systemd is unavailable; run serpantinum-icon-fix --apply after updates.")

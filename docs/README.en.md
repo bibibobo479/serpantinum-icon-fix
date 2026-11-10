@@ -30,8 +30,16 @@ Restart Serpantinum to clear Qt's icon cache. `--restart` and the GUI button sup
 
 Backups, hashes and original permissions are saved under `$XDG_STATE_HOME/serpantinum-icon-fix/backups` (default `~/.local/state/serpantinum-icon-fix/backups`). Repeated repairs are idempotent. Restore refuses to overwrite files changed after repair, including upstream updates.
 
-QML patches were tested on Serpantinum **2.3.0 / a62f825**. Unknown upstream code is skipped with a warning; read-only system and Nix installations are not modified with elevated permissions. Adapt those installations through your configuration or a writable user copy. The tool does not recreate deleted icon images, fix arbitrary window-class mappings, or guarantee repairs for every system-tray icon. Shell updates can overwrite patches; rerun the tool afterwards.
+QML patches were tested on Serpantinum **2.3.0 / a62f825**. Unknown upstream code is skipped with a warning; read-only system and Nix installations are not modified with elevated permissions. Adapt those installations through your configuration or a writable user copy. The tool does not recreate deleted icon images, fix arbitrary window-class mappings, or guarantee repairs for every system-tray icon. Shell updates can overwrite patches; the installed user timer reapplies recognized patches after files settle. Without systemd, rerun --apply manually.
 
 Exit status: `0` success, `1` error, `2` partial result/warnings. `--check` never writes files. Tests: `python3 -m unittest discover -s tests -v`.
 
 License: AGPL-3.0-only. See [NOTICE](../NOTICE.md) and [validation](VALIDATION.md).
+
+## Update resilience (1.1.0)
+
+Runtime components live outside the upstream tree, in `$XDG_DATA_HOME/serpantinum-icon-fix/qml`, and consumers use an explicit `IconFix` import. Replacing upstream `reusables/qmldir` no longer breaks patched consumers. Applying migrates legacy patches; upstream registrations are left untouched.
+
+`python3 install.py` also enables `serpantinum-icon-fix.timer` when user systemd is available. It checks about every 15–20 seconds and waits for at least 20 seconds of unchanged QML files before repairing. It never starts or restarts the shell. Unknown future QML is skipped; backups and concurrent-edit checks still apply. A paused or interrupted installer can also leave stable files: finish upstream installation in that case.
+
+Inspect with `systemctl --user status serpantinum-icon-fix.timer` and `journalctl --user -u serpantinum-icon-fix.service`. Disable with `systemctl --user disable --now serpantinum-icon-fix.timer` before using `--restore`, otherwise maintenance reapplies the repair. Non-systemd/custom installations can use `--apply` manually. Full upstream replacements may temporarily restore ordinary icon behavior until maintenance runs.

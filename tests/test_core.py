@@ -237,6 +237,55 @@ class RepairTests(unittest.TestCase):
         with self.assertRaises(core.RepairError):
             core.patch_qml(dock_source() + dock_source(), False)
 
+    def test_partial_update_cannot_remove_private_module_registration(self):
+        core.apply_plan(self.ctx, self.plan())
+        upstream = self.shell / 'reusables/qmldir'
+        upstream.write_text('NewUpstreamType 1.0 NewUpstreamType.qml\n')
+        for name in ('ResolvedAppIcon.qml', 'IconResolver.qml'):
+            (self.shell / 'reusables' / name).unlink(missing_ok=True)
+        for rel in core.PATCH_FILES:
+            text = (self.shell / rel).read_text()
+            self.assertIn('as IconFix', text)
+            self.assertIn('IconFix.ResolvedAppIcon {', text)
+        self.assertEqual(self.plan().changes, [])
+        self.assertIn('ResolvedAppIcon 1.0', (self.ctx.data / 'serpantinum-icon-fix/qml/qmldir').read_text())
+
+    def test_migrates_legacy_consumers_without_touching_upstream_registry(self):
+        path = self.shell / 'dock/DockAppButton.qml'
+        path.write_text(core.patch_qml(dock_source(), False))
+        registry = self.shell / 'reusables/qmldir'
+        registry.write_text('Upstream 1.0 Upstream.qml\n')
+        core.apply_plan(self.ctx, self.plan())
+        self.assertIn('IconFix.ResolvedAppIcon {', path.read_text())
+        self.assertEqual(registry.read_text(), 'Upstream 1.0 Upstream.qml\n')
+        self.assertEqual(self.plan().changes, [])
+
+    def test_full_update_is_repaired_only_after_settling(self):
+        from serpantinum_icon_fix.maintenance import maintain
+        core.apply_plan(self.ctx, self.plan())
+        path = self.shell / 'dock/DockAppButton.qml'
+        path.write_text(dock_source())
+        self.assertIn('waiting', maintain(self.ctx, now=100))
+        self.assertEqual(path.read_text(), dock_source())
+        self.assertIn('Waiting', maintain(self.ctx, now=110))
+        # Another update write restarts the debounce window.
+        (self.shell / 'Shell.qml').write_text('import Quickshell\nShellRoot {}\n')
+        self.assertIn('waiting', maintain(self.ctx, now=125))
+        self.assertEqual(path.read_text(), dock_source())
+        self.assertIn('Repaired', maintain(self.ctx, now=150))
+        self.assertIn('IconFix.ResolvedAppIcon', path.read_text())
+        self.assertEqual(self.plan().changes, [])
+
+    def test_maintenance_preserves_unknown_future_upstream_code(self):
+        from serpantinum_icon_fix.maintenance import maintain
+        core.apply_plan(self.ctx, self.plan())
+        path = self.shell / 'dock/DockAppButton.qml'
+        unknown = 'import QtQuick\nItem { property string newDesign: "future" }\n'
+        path.write_text(unknown)
+        maintain(self.ctx, now=100)
+        maintain(self.ctx, now=150)
+        self.assertEqual(path.read_text(), unknown)
+
     def test_xdg_absolute_paths_and_relative_fallback(self):
         with patch.dict(os.environ, {'HOME': str(self.home), 'XDG_DATA_HOME': 'relative',
                                      'XDG_STATE_HOME': str(self.home / 'custom-state'),

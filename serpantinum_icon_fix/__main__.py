@@ -11,6 +11,7 @@ from .core import Context, RepairError, apply_plan, plan_repair, restore_latest
 def main(argv=None):
     parser = argparse.ArgumentParser(description="Repair Serpantinum icons for the current desktop user, without sudo.")
     actions = parser.add_mutually_exclusive_group()
+    actions.add_argument("--maintain", action="store_true", help="repair settled upstream updates without restarting the shell")
     actions.add_argument("--check", "--dry-run", action="store_true", help="report changes without writing files")
     actions.add_argument("--apply", action="store_true", help="apply repairs in the terminal")
     actions.add_argument("--restore", action="store_true", help="undo the latest applied repair if files are unchanged")
@@ -21,6 +22,11 @@ def main(argv=None):
     parser.add_argument("--json", action="store_true", help="print machine-readable output; implies terminal mode")
     parser.add_argument("--version", action="version", version=__version__)
     args = parser.parse_args(argv)
+    if args.maintain:
+        if args.restart or args.shell or args.theme != "auto" or args.json:
+            parser.error("--maintain cannot be combined with restart, shell, theme or json options")
+        from .maintenance import main as maintain_main
+        return maintain_main()
     if args.check and args.restart:
         parser.error("--check cannot be combined with --restart")
     if args.gui and args.json:

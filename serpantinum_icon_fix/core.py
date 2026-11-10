@@ -274,6 +274,13 @@ def patch_qml(text: str, launcher: bool) -> str:
     return result
 
 
+def writable_parent(path):
+    parent = path.parent
+    while not parent.exists() and parent != parent.parent:
+        parent = parent.parent
+    return os.access(parent, os.W_OK)
+
+
 def plan_repair(ctx: Context, shell=None, theme="auto") -> Plan:
     plan = Plan(shell=discover_shell(ctx, shell))
     index_path, index = effective_index(ctx, "hicolor")
@@ -314,21 +321,31 @@ def plan_repair(ctx: Context, shell=None, theme="auto") -> Plan:
             candidates.append((path, old, new, "Resolve application identity and retry alternative icon files"))
         except RepairError as exc:
             plan.warnings.append(f"{rel}: {exc}")
+    # Keep runtime dependencies outside the tree replaced by the upstream updater.
+    module = ctx.data / "serpantinum-icon-fix/qml"
+    module_import = 'import ' + json.dumps(module.as_uri()) + ' as IconFix'
+    migrated = []
+    for path, old, new, reason in candidates:
+        if path.name != "Shell.qml":
+            new = re.sub(r'(?<![\w.])ResolvedAppIcon\s*\{', 'IconFix.ResolvedAppIcon {', new)
+            new = re.sub(r'^import \"[^\"\n]+\" as IconFix\s*$', '', new, flags=re.M).lstrip('\n')
+            new = module_import + "\n" + new
+        migrated.append((path, old, new, reason))
     assets = Path(__file__).parent
+    dependencies = []
     for name in ("IconResolver.qml", "ResolvedAppIcon.qml"):
-        path = plan.shell / "reusables" / name
+        path = module / name
         content = (assets / name).read_text().replace("__THEME__", selected).replace("__PACKAGE__", str(assets.parent))
-        candidates.append((path, path.read_text() if path.exists() else "", content, "Install shared icon resolver with catalog and image retries"))
-    path = plan.shell / "reusables/qmldir"
-    old = path.read_text() if path.exists() else ""
-    new = old
-    for line in ("singleton IconResolver 1.0 IconResolver.qml", "ResolvedAppIcon 1.0 ResolvedAppIcon.qml"):
-        if line not in new: new = new.rstrip() + "\n" + line + "\n"
-    candidates.append((path, old, new, "Register shared application icon components"))
+        dependencies.append((path, path.read_text() if path.exists() else "", content, "Install update-independent icon component"))
+    path = module / "qmldir"
+    content = "singleton IconResolver 1.0 IconResolver.qml\nResolvedAppIcon 1.0 ResolvedAppIcon.qml\n"
+    dependencies.append((path, path.read_text() if path.exists() else "", content, "Register private icon components"))
+    # Dependencies must exist before consumers can reload. Upstream qmldir is untouched.
+    candidates = dependencies + migrated
     for path, old, new, reason in candidates:
         if new == old:
             continue
-        if (path.exists() and not os.access(path, os.W_OK)) or not os.access(path.parent, os.W_OK):
+        if (path.exists() and not os.access(path, os.W_OK)) or not writable_parent(path):
             plan.warnings.append(f"Read-only installation, skipped: {path}. Use a writable user copy or your Nix configuration.")
             continue
         # Resolve symlinks so atomic writes preserve the installation's link layout.
